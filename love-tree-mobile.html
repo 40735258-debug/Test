@@ -1,0 +1,610 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xml:lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Love-tree</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.4/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jscex@0.6.5/jscex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jscex-parser@0.6.5/jscex-parser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jscex-jit@0.6.6/jscex-jit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jscex-builderbase@0.6.5/jscex-builderbase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jscex-async@0.6.5/jscex-async.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jscex-async-powerpack@0.6.5/jscex-async-powerpack.min.js"></script>
+
+  <style>
+    :root {
+      --logical-w: 1100;
+      --logical-h: 680;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffe;
+      font: 14px '微软雅黑','宋体', sans-serif;
+      color: #231F20;
+      height: 100%;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #main { width: 100%; }
+    /* Wrap keeps the 1100x680 aspect ratio while scaling to phone width */
+    #wrap {
+      position: relative;
+      margin: 0 auto;
+      width: min(100vw, 1100px);
+      /* maintain aspect ratio using CSS aspect-ratio on modern iOS */
+      aspect-ratio: 1100 / 680;
+      max-height: calc(100svh - 12px);
+      margin-top: 6px;
+    }
+    /* Fallback if older browser doesn’t support aspect-ratio */
+    @supports not (aspect-ratio: 1) {
+      #wrap { height: calc((min(100vw, 1100px) * 680) / 1100); }
+    }
+
+    #text {
+      position: absolute;
+      left: clamp(10px, 5vw, 60px);
+      top: clamp(10px, 6vw, 80px);
+      width: min(60vw, 400px);
+      height: min(55vh, 425px);
+      overflow: hidden;
+      pointer-events: none; /* allow taps through */
+    }
+    #code { display: none; font-size: clamp(14px, 2.3vw, 16px); }
+    .say { margin-left: 5px; }
+    .space { margin-right: 150px; }
+
+    /* Canvas scales to the wrapper, stays crisp on Retina via JS DPR scaling */
+    #canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: manipulation; /* better tap behavior on iOS */
+    }
+
+    /* Keep the clock-box element (unchanged structurally) but restyle for mobile and our red text */
+    #clock-box {
+      position: absolute;
+      right: clamp(10px, 4vw, 30px);
+      bottom: clamp(10px, 3vw, 20px);
+      font-size: clamp(22px, 6vw, 56px);
+      font-weight: 800;
+      display: none;
+      text-shadow: 0 2px 8px rgba(255,0,0,0.45);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #clock { color: #e9002d; } /* red text */
+    #clock .digit { font-size: 1em; } /* no digits but keep CSS */
+
+    #error {
+      margin: 40px auto 0;
+      text-align: center;
+      display: none;
+      padding: 0 12px;
+    }
+
+    .hand { cursor: pointer; }
+    a { color: #000; font-size: 14px; }
+  </style>
+
+  <script>
+    // --- keep original helpers (typewriter, timeElapse) untouched ---
+    var $win = $(window);
+    var clientWidth = $win.width();
+    var clientHeight = $win.height();
+
+    // Avoid full page reload on iOS when keyboard/orientation changes
+    // (kept structure but disabled the reload line to be mobile-friendly)
+    $(window).resize(function () {
+      /* no page reload on iPhone */
+    });
+
+    (function ($) {
+      $.fn.typewriter = function () {
+        this.each(function () {
+          var $ele = $(this), str = $ele.html(), progress = 0;
+          $ele.html('');
+          var timer = setInterval(function () {
+            var current = str.substr(progress, 1);
+            if (current == '<') {
+              progress = str.indexOf('>', progress) + 1;
+            } else {
+              progress++;
+            }
+            $ele.html(str.substring(0, progress) + (progress & 1 ? '_' : ''));
+            if (progress >= str.length) {
+              clearInterval(timer);
+            }
+          }, 75);
+        });
+        return this;
+      };
+    })(jQuery);
+
+    function timeElapse(date) {
+      // kept for compatibility; not used since we show "I LOVE YOU"
+      var current = Date();
+      var seconds = (Date.parse(current) - Date.parse(date)) / 1000;
+      var days = Math.floor(seconds / (3600 * 24));
+      seconds = seconds % (3600 * 24);
+      var hours = Math.floor(seconds / 3600);
+      if (hours < 10) hours = "0" + hours;
+      seconds = seconds % 3600;
+      var minutes = Math.floor(seconds / 60);
+      if (minutes < 10) minutes = "0" + minutes;
+      seconds = seconds % 60;
+      if (seconds < 10) seconds = "0" + seconds;
+      var result = "第 <span class=\"digit\">" + days + "</span> 天 <span class=\"digit\">" + hours + "</span> 小时 <span class=\"digit\">" + minutes + "</span> 分钟 <span class=\"digit\">" + seconds + "</span> 秒";
+      $("#clock").html(result);
+    }
+  </script>
+
+  <!-- === original tree/animation engine (unchanged) === -->
+  <script>
+    (function (window) {
+      function random(min, max) {
+        return min + Math.floor(Math.random() * (max - min + 1));
+      }
+      function bezier(cp, t) {
+        var p1 = cp[0].mul((1 - t) * (1 - t));
+        var p2 = cp[1].mul(2 * t * (1 - t));
+        var p3 = cp[2].mul(t * t);
+        return p1.add(p2).add(p3);
+      }
+      function inheart(x, y, r) {
+        var z = ((x / r) * (x / r) + (y / r) * (y / r) - 1);
+        z = z * z * z - (x / r) * (x / r) * (y / r) * (y / r) * (y / r);
+        return z < 0;
+      }
+
+      Point = function (x, y) { this.x = x || 0; this.y = y || 0; }
+      Point.prototype = {
+        clone: function () { return new Point(this.x, this.y); },
+        add: function (o) { var p = this.clone(); p.x += o.x; p.y += o.y; return p; },
+        sub: function (o) { var p = this.clone(); p.x -= o.x; p.y -= o.y; return p; },
+        div: function (n) { var p = this.clone(); p.x /= n; p.y /= n; return p; },
+        mul: function (n) { var p = this.clone(); p.x *= n; p.y *= n; return p; }
+      };
+
+      Heart = function () {
+        var points = [], x, y, t;
+        for (var i = 10; i < 30; i += 0.2) {
+          t = i / Math.PI;
+          x = 16 * Math.pow(Math.sin(t), 3);
+          y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+          points.push(new Point(x, y));
+        }
+        this.points = points;
+        this.length = points.length;
+      };
+      Heart.prototype = {
+        get: function (i, scale) { return this.points[i].mul(scale || 1); }
+      };
+
+      Seed = function (tree, point, scale, color) {
+        this.tree = tree;
+        var scale = scale || 1, color = color || '#FF0000';
+        this.heart = { point: point, scale: scale, color: color, figure: new Heart() };
+        this.cirle = { point: point, scale: scale, color: color, radius: 5 };
+      };
+      Seed.prototype = {
+        draw: function () { this.drawHeart(); this.drawText(); },
+        addPosition: function (x, y) { this.cirle.point = this.cirle.point.add(new Point(x, y)); },
+        canMove: function () { return this.cirle.point.y < (this.tree.height + 20); },
+        move: function (x, y) { this.clear(); this.drawCirle(); this.addPosition(x, y); },
+        canScale: function () { return this.heart.scale > 0.2; },
+        setHeartScale: function (scale) { this.heart.scale *= scale; },
+        scale: function (scale) { this.clear(); this.drawCirle(); this.drawHeart(); this.setHeartScale(scale); },
+        drawHeart: function () {
+          var ctx = this.tree.ctx, heart = this.heart;
+          var point = heart.point, color = heart.color, scale = heart.scale;
+          ctx.save(); ctx.fillStyle = color; ctx.translate(point.x, point.y);
+          ctx.beginPath(); ctx.moveTo(0, 0);
+          for (var i = 0; i < heart.figure.length; i++) {
+            var p = heart.figure.get(i, scale); ctx.lineTo(p.x, -p.y);
+          }
+          ctx.closePath(); ctx.fill(); ctx.restore();
+        },
+        drawCirle: function () {
+          var ctx = this.tree.ctx, cirle = this.cirle;
+          var point = cirle.point, color = cirle.color, scale = cirle.scale, radius = cirle.radius;
+          ctx.save(); ctx.fillStyle = color; ctx.translate(point.x, point.y); ctx.scale(scale, scale);
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, radius, 0, 2 * Math.PI);
+          ctx.closePath(); ctx.fill(); ctx.restore();
+        },
+        drawText: function () {
+          var ctx = this.tree.ctx, heart = this.heart;
+          var point = heart.point, color = heart.color, scale = heart.scale;
+          ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.translate(point.x, point.y); ctx.scale(scale, scale);
+          ctx.moveTo(0, 0); ctx.lineTo(15, 15); ctx.lineTo(60, 15); ctx.stroke();
+          ctx.moveTo(0, 0); ctx.scale(0.75, 0.75); ctx.font = "12px 微软雅黑,Verdana"; ctx.fillText("click here", 23, 16);
+          ctx.restore();
+        },
+        clear: function () {
+          var ctx = this.tree.ctx, cirle = this.cirle;
+          var point = cirle.point, scale = cirle.scale, radius = 26;
+          var w = h = (radius * scale);
+          ctx.clearRect(point.x - w, point.y - h, 4 * w, 4 * h);
+        },
+        hover: function (x, y) {
+          var ctx = this.tree.ctx;
+          var pixel = ctx.getImageData(x, y, 1, 1);
+          return pixel.data[3] == 255;
+        }
+      };
+
+      Footer = function (tree, width, height, speed) {
+        this.tree = tree;
+        this.point = new Point(tree.seed.heart.point.x, tree.height - height / 2);
+        this.width = width; this.height = height; this.speed = speed || 2; this.length = 0;
+      };
+      Footer.prototype = {
+        draw: function () {
+          var ctx = this.tree.ctx, point = this.point;
+          var len = this.length / 2;
+          ctx.save();
+          ctx.strokeStyle = 'rgb(35, 31, 32)';
+          ctx.lineWidth = this.height;
+          ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+          ctx.translate(point.x, point.y);
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(len, 0); ctx.lineTo(-len, 0);
+          ctx.stroke(); ctx.restore();
+          if (this.length < this.width) { this.length += this.speed; }
+        }
+      };
+
+      Tree = function (canvas, width, height, opt) {
+        this.canvas = canvas; this.ctx = canvas.getContext('2d');
+        this.width = width; this.height = height; this.opt = opt || {};
+        this.record = {};
+        this.initSeed(); this.initFooter(); this.initBranch(); this.initBloom();
+      };
+      Tree.prototype = {
+        initSeed: function () {
+          var seed = this.opt.seed || {};
+          var x = seed.x || this.width / 2, y = seed.y || this.height / 2;
+          var point = new Point(x, y);
+          var color = seed.color || '#FF0000', scale = seed.scale || 1;
+          this.seed = new Seed(this, point, scale, color);
+        },
+        initFooter: function () {
+          var footer = this.opt.footer || {};
+          var width = footer.width || this.width, height = footer.height || 5, speed = footer.speed || 2;
+          this.footer = new Footer(this, width, height, speed);
+        },
+        initBranch: function () {
+          var branchs = this.opt.branch || [];
+          this.branchs = []; this.addBranchs(branchs);
+        },
+        initBloom: function () {
+          var bloom = this.opt.bloom || {};
+          var cache = [], num = bloom.num || 500, width = bloom.width || this.width, height = bloom.height || this.height, figure = this.seed.heart.figure;
+          var r = 240;
+          for (var i = 0; i < num; i++) cache.push(this.createBloom(width, height, r, figure));
+          this.blooms = []; this.bloomsCache = cache;
+        },
+        toDataURL: function (type) { return this.canvas.toDataURL(type); },
+        draw: function (k) {
+          var s = this, ctx = s.ctx, rec = s.record[k]; if (!rec) return;
+          var point = rec.point, image = rec.image; ctx.save(); ctx.putImageData(image, point.x, point.y); ctx.restore();
+        },
+        addBranch: function (branch) { this.branchs.push(branch); },
+        addBranchs: function (branchs) {
+          var s = this, b, p1, p2, p3, r, l, c;
+          for (var i = 0; i < branchs.length; i++) {
+            b = branchs[i];
+            p1 = new Point(b[0], b[1]); p2 = new Point(b[2], b[3]); p3 = new Point(b[4], b[5]);
+            r = b[6]; l = b[7]; c = b[8];
+            s.addBranch(new Branch(s, p1, p2, p3, r, l, c));
+          }
+        },
+        removeBranch: function (branch) {
+          var branchs = this.branchs;
+          for (var i = 0; i < branchs.length; i++) if (branchs[i] === branch) branchs.splice(i, 1);
+        },
+        canGrow: function () { return !!this.branchs.length; },
+        grow: function () {
+          var branchs = this.branchs;
+          for (var i = 0; i < branchs.length; i++) { var branch = branchs[i]; if (branch) branch.grow(); }
+        },
+        addBloom: function (bloom) { this.blooms.push(bloom); },
+        removeBloom: function (bloom) {
+          var blooms = this.blooms;
+          for (var i = 0; i < blooms.length; i++) if (blooms[i] === bloom) blooms.splice(i, 1);
+        },
+        createBloom: function (width, height, radius, figure, color, alpha, angle, scale, place, speed) {
+          var x, y;
+          while (true) {
+            x = Math.floor(Math.random() * (width - 40)) + 20; 
+            y = Math.floor(Math.random() * (height - 40)) + 20;
+            if (inheart(x - width / 2, height - (height - 40) / 2 - y, radius)) {
+              return new Bloom(this, new Point(x, y), figure, color, alpha, angle, scale, place, speed);
+            }
+          }
+        },
+        canFlower: function () { return !!this.blooms.length; },
+        flower: function (num) {
+          var s = this, blooms = s.bloomsCache.splice(0, num);
+          for (var i = 0; i < blooms.length; i++) s.addBloom(blooms[i]);
+          blooms = s.blooms;
+          for (var j = 0; j < blooms.length; j++) blooms[j].flower();
+        },
+        snapshot: function (k, x, y, width, height) {
+          var ctx = this.ctx; var image = ctx.getImageData(x, y, width, height);
+          this.record[k] = { image: image, point: new Point(x, y), width: width, height: height };
+        },
+        setSpeed: function (k, speed) { this.record[k || "move"].speed = speed; },
+        move: function (k, x, y) {
+          var s = this, ctx = s.ctx;
+          var rec = s.record[k || "move"];
+          var point = rec.point, image = rec.image, speed = rec.speed || 10, width = rec.width, height = rec.height;
+          i = point.x + speed < x ? point.x + speed : x;
+          j = point.y + speed < y ? point.y + speed : y;
+          ctx.save(); ctx.clearRect(point.x, point.y, width, height); ctx.putImageData(image, i, j); ctx.restore();
+          rec.point = new Point(i, j); rec.speed = speed * 0.95; if (rec.speed < 2) rec.speed = 2;
+          return i < x || j < y;
+        },
+        jump: function () {
+          var s = this, blooms = s.blooms;
+          if (blooms.length) { for (var i = 0; i < blooms.length; i++) blooms[i].jump(); }
+          if ((blooms.length && blooms.length < 3) || !blooms.length) {
+            var bloom = this.opt.bloom || {}, width = bloom.width || this.width, height = bloom.height || this.height, figure = this.seed.heart.figure;
+            var r = 240;
+            for (var i = 0; i < Math.floor(Math.random() * 2) + 1; i++) {
+              blooms.push(this.createBloom(width / 2 + width, height, r, figure, null, 1, null, 1, new Point(Math.floor(Math.random() * 701) - 100, 720), Math.floor(Math.random() * 101) + 200));
+            }
+          }
+        }
+      };
+
+      Branch = function (tree, point1, point2, point3, radius, length, branchs) {
+        this.tree = tree; this.point1 = point1; this.point2 = point2; this.point3 = point3;
+        this.radius = radius; this.length = length || 100; this.len = 0; this.t = 1 / (this.length - 1);
+        this.branchs = branchs || [];
+      };
+      Branch.prototype = {
+        grow: function () {
+          var s = this, p;
+          if (s.len <= s.length) {
+            p = bezier([s.point1, s.point2, s.point3], s.len * s.t);
+            s.draw(p); s.len += 1; s.radius *= 0.97;
+          } else { s.tree.removeBranch(s); s.tree.addBranchs(s.branchs); }
+        },
+        draw: function (p) {
+          var s = this, ctx = s.tree.ctx;
+          ctx.save(); ctx.beginPath(); ctx.fillStyle = 'rgb(35, 31, 32)'; ctx.shadowColor = 'rgb(35, 31, 32)'; ctx.shadowBlur = 2;
+          ctx.moveTo(p.x, p.y); ctx.arc(p.x, p.y, s.radius, 0, 2 * Math.PI); ctx.closePath(); ctx.fill(); ctx.restore();
+        }
+      };
+
+      Bloom = function (tree, point, figure, color, alpha, angle, scale, place, speed) {
+        this.tree = tree; this.point = point;
+        this.color = color || 'rgb(255,' + Math.floor(Math.random() * 256) + ',' + Math.floor(Math.random() * 256) + ')';
+        this.alpha = alpha || (Math.floor(Math.random() * (100 - 30 + 1)) + 30)/100; 
+        this.angle = angle || Math.floor(Math.random() * 360);
+        this.scale = scale || 0.1; this.place = place; this.speed = speed;
+        this.figure = figure;
+      };
+      Bloom.prototype = {
+        setFigure: function (figure) { this.figure = figure; },
+        flower: function () {
+          var s = this; s.draw(); s.scale += 0.1; if (s.scale > 1) { s.tree.removeBloom(s); }
+        },
+        draw: function () {
+          var s = this, ctx = s.tree.ctx, figure = s.figure;
+          ctx.save(); ctx.fillStyle = s.color; ctx.globalAlpha = s.alpha;
+          ctx.translate(s.point.x, s.point.y); ctx.scale(s.scale, s.scale); ctx.rotate(s.angle);
+          ctx.beginPath(); ctx.moveTo(0, 0);
+          for (var i = 0; i < figure.length; i++) { var p = figure.get(i); ctx.lineTo(p.x, -p.y); }
+          ctx.closePath(); ctx.fill(); ctx.restore();
+        },
+        jump: function () {
+          var s = this, height = s.tree.height;
+          if (s.point.x < -20 || s.point.y > height + 20) { s.tree.removeBloom(s); }
+          else { s.draw(); s.point = s.place.sub(s.point).div(s.speed).add(s.point); s.angle += 0.05; s.speed -= 1; }
+        }
+      };
+
+      window.random = random; window.bezier = bezier; window.Point = Point; window.Tree = Tree;
+    })(window);
+  </script>
+</head>
+
+<body>
+  <div id="main">
+    <div id="error">您使用的浏览器无法支持即将显示的内容，请换成谷歌(<a href="http://www.google.cn/chrome/intl/zh-CN/landing_chrome.html?hl=zh-CN&brand=CHMI">Chrome</a>)或者火狐(<a href="http://firefox.com.cn/download/">Firefox</a>)浏览器查看</div>
+
+    <div id="wrap">
+      <div id="text">
+        <div id="code">
+          <span class="say">My love,</span><br>
+          <span class="say">Every moment with you feels like time well spent.</span><br>
+          <span class="say">Whether it’s a quiet night out, a long drive, or getting lost on a trip together,</span><br>
+          <span class="say">I love every second we share.</span><br>
+          <span class="say">You make the simplest days feel special,</span><br>
+          <span class="say">and the biggest adventures feel like home.</span><br><br>
+          <span class="say">I love how we can laugh at nothing,</span><br>
+          <span class="say">talk for hours, or just sit in silence and still feel connected.</span><br>
+          <span class="say">You’re the calm in my chaos, the reason I look forward to every weekend,</span><br>
+          <span class="say">and the one person I’d choose to explore the world with, over and over again.</span><br><br>
+          <span class="say">No matter where we go or what we do,</span><br>
+          <span class="say">as long as it’s with you, it’s my favorite place to be.</span><br><br>
+          <span class="say"><span class="space"></span> -- Your Love S.P.</span>
+        </div>
+      </div>
+
+      <!-- Keep clock-box element; we’ll fill with I LOVE YOU and show it -->
+      <div id="clock-box"><div id="clock"></div></div>
+
+      <canvas id="canvas" width="1100" height="680"></canvas>
+    </div>
+    <!-- <audio src="love.mp3" autoplay="autoplay"></audio> -->
+  </div>
+
+  <script>
+    (function () {
+      var canvas = $('#canvas');
+      if (!canvas[0].getContext) { $("#error").show(); return false; }
+
+      // Logical (design) size stays 1100x680; we scale CSS to fit phone
+      var LOGICAL_W = 1100, LOGICAL_H = 680;
+      var ctx = canvas[0].getContext('2d');
+
+      function fitCanvas() {
+        var vw = Math.min(window.innerWidth, 1100);
+        var vh = Math.min(window.innerHeight - 12, (vw * LOGICAL_H) / LOGICAL_W);
+        var width = vw, height = (width * LOGICAL_H) / LOGICAL_W;
+        if (height > window.innerHeight - 12) {
+          height = window.innerHeight - 12;
+          width = (height * LOGICAL_W) / LOGICAL_H;
+        }
+        canvas.css({ width: width + 'px', height: height + 'px' });
+
+        // Retina crispness: render at DPR in logical space
+        var dpr = window.devicePixelRatio || 1;
+        canvas[0].width = LOGICAL_W * dpr;
+        canvas[0].height = LOGICAL_H * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      fitCanvas();
+      window.addEventListener('resize', fitCanvas, { passive: true });
+      window.addEventListener('orientationchange', fitCanvas, { passive: true });
+
+      // Map touch/mouse coordinates to logical canvas coordinates
+      function getLogicalXY(e) {
+        var rect = canvas[0].getBoundingClientRect();
+        var cssX, cssY;
+        if (e.touches && e.touches[0]) {
+          cssX = e.touches[0].clientX - rect.left;
+          cssY = e.touches[0].clientY - rect.top;
+        } else if (e.changedTouches && e.changedTouches[0]) {
+          cssX = e.changedTouches[0].clientX - rect.left;
+          cssY = e.changedTouches[0].clientY - rect.top;
+        } else {
+          cssX = (e.clientX || e.pageX) - rect.left;
+          cssY = (e.clientY || e.pageY) - rect.top;
+        }
+        var ratioX = LOGICAL_W / rect.width;
+        var ratioY = LOGICAL_H / rect.height;
+        return { x: cssX * ratioX, y: cssY * ratioY };
+      }
+
+      // original opts unchanged
+      var opts = {
+        seed: { x: LOGICAL_W / 2 - 20, color: "rgb(190, 26, 37)", scale: 2 },
+        branch: [
+          [535, 680, 570, 250, 500, 200, 30, 100, [
+            [540, 500, 455, 417, 340, 400, 13, 100, [
+              [450, 435, 434, 430, 394, 395, 2, 40]
+            ]],
+            [550, 445, 600, 356, 680, 345, 12, 100, [
+              [578, 400, 648, 409, 661, 426, 3, 80]
+            ]],
+            [539, 281, 537, 248, 534, 217, 3, 40],
+            [546, 397, 413, 247, 328, 244, 9, 80, [
+              [427, 286, 383, 253, 371, 205, 2, 40],
+              [498, 345, 435, 315, 395, 330, 4, 60]
+            ]],
+            [546, 357, 608, 252, 678, 221, 6, 100, [
+              [590, 293, 646, 277, 648, 271, 2, 80]
+            ]]
+          ]]
+        ],
+        bloom: { num: 700, width: 1080, height: 650 },
+        footer: { width: 1200, height: 5, speed: 10 }
+      };
+
+      var tree = new Tree(canvas[0], LOGICAL_W, LOGICAL_H, opts);
+      var seed = tree.seed;
+      var foot = tree.footer;
+      var hold = 1;
+
+      function onPress(e) {
+        var pos = getLogicalXY(e);
+        if (seed.hover(pos.x, pos.y)) {
+          hold = 0;
+          canvas.off('click');
+          canvas.off('mousemove');
+          canvas[0].style.cursor = 'default';
+        }
+      }
+      function onMove(e) {
+        var pos = getLogicalXY(e);
+        if (seed.hover(pos.x, pos.y)) {
+          canvas.addClass('hand');
+        } else {
+          canvas.removeClass('hand');
+        }
+      }
+
+      // Mouse + Touch bindings (for iPhone)
+      canvas.on('click', onPress);
+      canvas.on('mousemove', onMove);
+      canvas.on('touchstart', function (e) { onPress(e); }, { passive: true });
+      canvas.on('touchmove', function (e) { onMove(e); }, { passive: true });
+
+      var seedAnimate = eval(Jscex.compile("async", function () {
+        seed.draw();
+        while (hold) { $await(Jscex.Async.sleep(10)); }
+        while (seed.canScale()) { seed.scale(0.95); $await(Jscex.Async.sleep(10)); }
+        while (seed.canMove()) { seed.move(0, 2); foot.draw(); $await(Jscex.Async.sleep(10)); }
+      }));
+
+      var growAnimate = eval(Jscex.compile("async", function () {
+        do { tree.grow(); $await(Jscex.Async.sleep(10)); } while (tree.canGrow());
+      }));
+
+      var flowAnimate = eval(Jscex.compile("async", function () {
+        do { tree.flower(2); $await(Jscex.Async.sleep(10)); } while (tree.canFlower());
+      }));
+
+      var moveAnimate = eval(Jscex.compile("async", function () {
+        tree.snapshot("p1", 240, 0, 610, 680);
+        while (tree.move("p1", 500, 0)) { foot.draw(); $await(Jscex.Async.sleep(10)); }
+        foot.draw(); tree.snapshot("p2", 500, 0, 610, 680);
+        canvas.parent().css("background", "url(" + tree.toDataURL('image/png') + ")");
+        canvas.css("background", "#ffe"); $await(Jscex.Async.sleep(300)); canvas.css("background", "none");
+      }));
+
+      var jumpAnimate = eval(Jscex.compile("async", function () {
+        while (true) { tree.ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H); tree.jump(); foot.draw(); $await(Jscex.Async.sleep(25)); }
+      }));
+
+      var textAnimate = eval(Jscex.compile("async", function () {
+        var together = new Date();
+        together.setFullYear(2010, 5, 8); together.setHours(20); together.setMinutes(20); together.setSeconds(0); together.setMilliseconds(0);
+
+        $("#code").show().typewriter();
+        $("#clock-box").fadeIn(500);
+        // Replace the timer with red "I LOVE YOU" and stop the loop for mobile
+        $("#clock").html('<span style="color:#e9002d;font-weight:900;">I LOVE YOU</span>');
+        $await(Jscex.Async.sleep(200));
+        return;
+
+        // (kept original loop below; never runs because of return)
+        while (true) {
+          timeElapse(together);
+          $await(Jscex.Async.sleep(1000));
+        }
+      }));
+
+      var runAsync = eval(Jscex.compile("async", function () {
+        $await(seedAnimate());
+        $await(growAnimate());
+        $await(flowAnimate());
+        $await(moveAnimate());
+        textAnimate().start();
+        $await(jumpAnimate());
+      }));
+
+      runAsync().start();
+    })();
+  </script>
+</body>
+</html>
